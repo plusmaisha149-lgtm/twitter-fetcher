@@ -14,7 +14,7 @@ import os
 DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://twitter_data_pygj_user:bBZRdS06QyhBHhBGWRtl4pkLjlaFO5MS@dpg-d5adn26r433s738bha50-a.singapore-postgres.render.com/twitter_data_pygj')
 
 # Twitter API credentials (from environment or hardcoded)
-BEARER_TOKEN = os.getenv('TWITTER_BEARER_TOKEN', 'AAAAAAAAAAAAAAAAAAAAACi4zgEAAAAAfAPIw7a3c3dtZWDEA74PmXV2qKI%3DHFDU7qzd0YjuYmUBLmSuDuJZxXh8iTyfY7Susniv3JWuKhJRrg')
+BEARER_TOKEN = os.getenv('TWITTER_BEARER_TOKEN', 'TWITTER_BEARER_TOKEN', 'AAAAAAAAAAAAAAAAAAAAACi4zgEAAAAA0qATv6QklrjGbF8Pe9hdr1mavRk%3DTEwNMv92PRuxVfEbZfHxx098RMIbBzRyOMlNO1lsfXsA1GDr9U')
 
 def fetch_tweets():
     """Fetch tweets from Twitter API"""
@@ -120,4 +120,5 @@ def store_tweets(tweets):
         print(f"? Database error: {e}")
 
 if __name__ == "__main__":
+
     fetch_tweets()
