@@ -27,10 +27,7 @@ def fetch_tweets():
 
         # Search queries
         queries = [
-            "Samia Suluhu Hassan",
-            "Tundu Lissu",
-            "Tanzania politics",
-            "Tanzania"
+            "Samia Suluhu Hassan"
         ]
 
         all_tweets = []
@@ -122,4 +119,5 @@ def store_tweets(tweets):
 if __name__ == "__main__":
 
     fetch_tweets()
+
 
