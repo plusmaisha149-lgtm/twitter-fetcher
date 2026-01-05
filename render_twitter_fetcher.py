@@ -37,7 +37,7 @@ def fetch_tweets():
             try:
                 response = client.search_recent_tweets(
                     query=query,
-                    max_results=2,
+                    max_results=10,
                     tweet_fields=['created_at', 'public_metrics', 'lang', 'author_id'],
                     expansions=['author_id'],
                     user_fields=['username']
@@ -119,6 +119,7 @@ def store_tweets(tweets):
 if __name__ == "__main__":
 
     fetch_tweets()
+
 
 
 
