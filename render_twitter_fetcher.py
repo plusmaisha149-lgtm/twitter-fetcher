@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
 """
 ==============================================================================
-TWITTER DATA FETCHER - FULLY COMMENTED VERSION
+ENHANCED TWITTER DATA FETCHER - FULLY COMMENTED VERSION
 ==============================================================================
-Purpose: Fetch tweets about Tanzania politics from Twitter API and store in database
+Purpose: Fetch tweets with FULL text and reply counts from Twitter API
 Author: Your Name
 Last Updated: January 6, 2026
+
+NEW FEATURES in this version:
+1. ✅ Gets FULL tweet text (no truncation on retweets)
+2. ✅ Fetches reply_count (how many comments each tweet has)
+3. ✅ Stores conversation_id (for tracking discussion threads)
+4. ✅ Identifies retweets and gets original content
 
 This script:
 1. Connects to Twitter API using Bearer Token
 2. Searches for specific keywords (like "Samia Suluhu Hassan")
-3. Extracts tweet data (text, likes, retweets, etc.)
+3. Extracts COMPLETE tweet data (text, likes, retweets, replies, etc.)
 4. Stores tweets in PostgreSQL database on Render
 5. Runs automatically every 15 minutes via Render Cron Job
 
@@ -48,25 +54,32 @@ BEARER_TOKEN = os.getenv(
 )
 
 # ==============================================================================
-# FUNCTION 1: FETCH TWEETS FROM TWITTER
+# FUNCTION 1: FETCH TWEETS FROM TWITTER (ENHANCED)
 # ==============================================================================
 
 def fetch_tweets():
     """
-    This function connects to Twitter API and fetches tweets
+    This function connects to Twitter API and fetches tweets with FULL TEXT
+    
+    ENHANCEMENTS in this version:
+    - Gets complete text (no truncation on retweets)
+    - Fetches reply_count (number of comments)
+    - Stores conversation_id (for threading)
+    - Identifies if tweet is a retweet
     
     Steps:
     1. Create Twitter API client with authentication
     2. Search for tweets using keywords
-    3. Extract relevant data from each tweet
-    4. Return list of tweets with their data
+    3. Extract ALL available data from each tweet
+    4. Get full text for retweets (not truncated)
+    5. Store in database with enhanced metadata
     
     Returns:
-        list: List of dictionaries, each containing tweet data
+        None (stores tweets directly to database)
     """
     
     # Print start message with timestamp
-    print(f"[{datetime.now()}] Starting Twitter fetch...")
+    print(f"[{datetime.now()}] Starting ENHANCED Twitter fetch...")
     
     try:
         # ------------------------------------------------------------------
@@ -110,21 +123,28 @@ def fetch_tweets():
             try:
                 # Ask Twitter API to search for recent tweets
                 # This is the main API call that fetches data from Twitter
+                # 
+                # NEW! We're requesting MORE fields to get complete data
                 response = client.search_recent_tweets(
                     query=query,              # What to search for
                     max_results=10,           # How many tweets to get (10-100)
                     
                     # TWEET FIELDS: What information about the tweet do we want?
                     tweet_fields=[
-                        'created_at',         # When was it posted?
-                        'public_metrics',     # Likes, retweets, replies counts
-                        'lang',               # Language (en, sw, etc.)
-                        'author_id'           # Who posted it?
+                        'created_at',             # When was it posted?
+                        'public_metrics',         # Likes, retweets, REPLIES, quotes
+                        'lang',                   # Language (en, sw, etc.)
+                        'author_id',              # Who posted it?
+                        'conversation_id',        # NEW! Thread ID for replies
+                        'referenced_tweets',      # NEW! Info about RTs/quotes
+                        'in_reply_to_user_id'     # NEW! If this is a reply to someone
                     ],
                     
                     # EXPANSIONS: Get additional related data
+                    # This tells Twitter to also send us the full data for:
                     expansions=[
-                        'author_id'           # Also get author information
+                        'author_id',              # Author information
+                        'referenced_tweets.id'    # NEW! Full text of original tweet (for RTs)
                     ],
                     
                     # USER FIELDS: What information about the author do we want?
@@ -146,12 +166,13 @@ def fetch_tweets():
                     continue  # Skip to next search term
                 
                 # ------------------------------------------------------------------
-                # STEP 5: BUILD A LOOKUP TABLE FOR AUTHORS
+                # STEP 5: BUILD LOOKUP TABLES
                 # ------------------------------------------------------------------
                 
                 # Twitter returns user data separately from tweets
                 # We need to match them up using author_id
                 
+                # --- USER LOOKUP TABLE ---
                 # Create empty dictionary to store user data
                 users = {}
                 
@@ -160,6 +181,17 @@ def fetch_tweets():
                     # Create a dictionary: {user_id: user_object}
                     # This lets us quickly look up user info by ID
                     users = {u.id: u for u in response.includes['users']}
+                
+                # --- REFERENCED TWEETS LOOKUP TABLE (NEW!) ---
+                # For retweets, Twitter returns the ORIGINAL tweet separately
+                # We need this to get the FULL TEXT (not truncated)
+                referenced = {}
+                
+                # Check if response includes referenced tweets
+                if response.includes and 'tweets' in response.includes:
+                    # Create a dictionary: {tweet_id: tweet_object}
+                    # This contains the FULL original tweets that were retweeted
+                    referenced = {t.id: t for t in response.includes['tweets']}
                 
                 # ------------------------------------------------------------------
                 # STEP 6: PROCESS EACH TWEET
@@ -179,12 +211,58 @@ def fetch_tweets():
                     else:
                         username = f"user_{tweet.author_id}"
                     
+                    # ------------------------------------------------------------------
+                    # NEW! GET FULL TEXT (Handle Retweets Properly)
+                    # ------------------------------------------------------------------
+                    
+                    # By default, use the tweet's text
+                    # For retweets, this is truncated with "..."
+                    full_text = tweet.text
+                    
+                    # Initialize flags
+                    is_retweet = False           # Is this a retweet?
+                    original_tweet_id = None     # ID of original tweet (if RT)
+                    
+                    # Check if this tweet references another tweet
+                    # (retweet, quote, or reply)
+                    if tweet.referenced_tweets:
+                        # Loop through all referenced tweets
+                        for ref in tweet.referenced_tweets:
+                            # Check if this is a RETWEET
+                            if ref.type == 'retweeted':
+                                is_retweet = True
+                                original_tweet_id = ref.id
+                                
+                                # Now get the FULL TEXT from the original tweet
+                                # Look it up in our referenced tweets dictionary
+                                if ref.id in referenced:
+                                    original = referenced[ref.id]
+                                    # Reconstruct full RT text
+                                    # Format: "RT @original_author: full original text"
+                                    full_text = f"RT @{username}: {original.text}"
+                    
+                    # ------------------------------------------------------------------
+                    # NEW! EXTRACT REPLY COUNT
+                    # ------------------------------------------------------------------
+                    
+                    # Get the number of replies (comments) this tweet has
+                    # reply_count tells us how many people commented
+                    reply_count = tweet.public_metrics.get('reply_count', 0)
+                    
+                    # ------------------------------------------------------------------
+                    # NEW! EXTRACT QUOTE COUNT
+                    # ------------------------------------------------------------------
+                    
+                    # Get the number of quote tweets
+                    # quote_count tells us how many people quoted this tweet
+                    quote_count = tweet.public_metrics.get('quote_count', 0)
+                    
                     # --- Build Tweet Data Dictionary ---
                     # Create a dictionary with all the tweet information we want to save
                     tweet_data = {
                         # BASIC INFORMATION
                         'id': tweet.id,                    # Unique tweet ID (number)
-                        'text': tweet.text,                # Tweet content (text)
+                        'text': full_text,                 # FULL TEXT (not truncated!)
                         'created_at': tweet.created_at,    # When posted (datetime)
                         
                         # AUTHOR INFORMATION
@@ -193,13 +271,20 @@ def fetch_tweets():
                         # ENGAGEMENT METRICS (how popular is it?)
                         'retweet_count': tweet.public_metrics['retweet_count'],  # How many retweets
                         'like_count': tweet.public_metrics['like_count'],        # How many likes
+                        'reply_count': reply_count,        # NEW! How many replies/comments
+                        'quote_count': quote_count,        # NEW! How many quote tweets
+                        
+                        # CONVERSATION THREADING (NEW!)
+                        'conversation_id': tweet.conversation_id,    # Thread ID
+                        'is_retweet': is_retweet,                   # Is this a RT?
+                        'original_tweet_id': original_tweet_id,     # Original tweet ID (if RT)
                         
                         # METADATA (extra information)
                         'raw_data': {
                             'query': query,                # Which search found this tweet
                             'language': tweet.lang,        # Language code (en, sw, etc.)
                             'is_mock': False,              # This is real data, not mock
-                            'source': 'twitter_api'        # Where it came from
+                            'source': 'twitter_api_enhanced'  # Enhanced version marker
                         }
                     }
                     
@@ -207,7 +292,7 @@ def fetch_tweets():
                     all_tweets.append(tweet_data)
                 
                 # Print how many tweets we found for this search
-                print(f"  ✅ Found {len(response.data)} tweets")
+                print(f"  ✅ Found {len(response.data)} tweets (with FULL text)")
                 
             except Exception as e:
                 # If something goes wrong with this search, print error and continue
@@ -240,12 +325,15 @@ def fetch_tweets():
         print(f"❌ Fatal error: {e}")
 
 # ==============================================================================
-# FUNCTION 2: STORE TWEETS IN DATABASE
+# FUNCTION 2: STORE TWEETS IN DATABASE (ENHANCED)
 # ==============================================================================
 
 def store_tweets(tweets):
     """
     This function saves tweets to PostgreSQL database
+    
+    ENHANCEMENT: Now uses UPDATE on conflict to refresh data
+    If a tweet already exists, we update its metrics (likes, RTs may have changed)
     
     Args:
         tweets (list): List of tweet dictionaries to save
@@ -253,7 +341,7 @@ def store_tweets(tweets):
     Process:
     1. Connect to PostgreSQL database
     2. For each tweet, try to insert it
-    3. If tweet already exists (duplicate ID), skip it
+    3. If tweet already exists, UPDATE it with new data
     4. Commit changes and close connection
     
     Returns:
@@ -277,55 +365,59 @@ def store_tweets(tweets):
         # STEP 2: INITIALIZE COUNTERS
         # ------------------------------------------------------------------
         
-        # Keep track of how many tweets we successfully store
+        # Keep track of how many tweets we successfully store or update
         stored_count = 0
         
-        # Keep track of how many duplicates we skip
-        duplicate_count = 0
-        
         # ------------------------------------------------------------------
-        # STEP 3: INSERT EACH TWEET
+        # STEP 3: INSERT OR UPDATE EACH TWEET
         # ------------------------------------------------------------------
         
         # Loop through each tweet we want to save
         for tweet in tweets:
             try:
-                # --- Prepare SQL INSERT Statement ---
+                # --- Prepare SQL INSERT/UPDATE Statement ---
                 
                 # This SQL command inserts tweet data into 'tweets' table
-                # ON CONFLICT (id) DO NOTHING means: if this tweet ID already exists, skip it
+                # ON CONFLICT (id) DO UPDATE means: 
+                #   - If tweet ID is new, INSERT it
+                #   - If tweet ID exists, UPDATE it with new data
+                # 
+                # Why UPDATE? Engagement metrics change over time!
+                # A tweet might have had 10 likes, now has 50 likes
                 cursor.execute("""
                     INSERT INTO tweets (
                         id,              -- Tweet ID (unique)
-                        text,            -- Tweet content
+                        text,            -- Tweet content (FULL TEXT now!)
                         author_username, -- Who posted it
                         created_at,      -- When posted
                         retweet_count,   -- Retweets
                         like_count,      -- Likes
-                        raw_data         -- Extra data as JSON
+                        raw_data         -- Extra data as JSON (includes reply_count!)
                     )
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (id) DO NOTHING
+                    ON CONFLICT (id) DO UPDATE SET
+                        text = EXCLUDED.text,              -- Update text (might be full now)
+                        retweet_count = EXCLUDED.retweet_count,  -- Update RT count
+                        like_count = EXCLUDED.like_count,        -- Update like count
+                        raw_data = EXCLUDED.raw_data             -- Update all metadata
                 """, (
                     # Values to insert (matching the order above)
                     tweet['id'],                    # From tweet dictionary
-                    tweet['text'],                  # From tweet dictionary
+                    tweet['text'],                  # FULL TEXT (not truncated!)
                     tweet['author_username'],       # From tweet dictionary
                     tweet['created_at'],            # From tweet dictionary
                     tweet['retweet_count'],         # From tweet dictionary
                     tweet['like_count'],            # From tweet dictionary
-                    json.dumps(tweet['raw_data'])   # Convert Python dict to JSON string
+                    json.dumps(tweet)               # Store EVERYTHING as JSON
+                                                    # (includes reply_count, conversation_id, etc.)
                 ))
                 
-                # --- Check if Insert Was Successful ---
+                # --- Check if Operation Was Successful ---
                 
                 # rowcount tells us how many rows were affected
-                # If > 0, tweet was inserted successfully
-                # If 0, tweet already existed (duplicate)
+                # If > 0, tweet was inserted or updated successfully
                 if cursor.rowcount > 0:
                     stored_count += 1          # Increment success counter
-                else:
-                    duplicate_count += 1       # Increment duplicate counter
                 
             except Exception as e:
                 # If something goes wrong with this specific tweet, print error
@@ -349,10 +441,7 @@ def store_tweets(tweets):
         # STEP 5: PRINT SUMMARY
         # ------------------------------------------------------------------
         
-        print(f"✅ Stored: {stored_count} new tweets")
-        
-        if duplicate_count > 0:
-            print(f"⏭️ Skipped: {duplicate_count} duplicates")
+        print(f"✅ Stored/Updated: {stored_count} tweets with FULL text and reply counts")
         
     except Exception as e:
         # If something goes wrong with database connection, print error
