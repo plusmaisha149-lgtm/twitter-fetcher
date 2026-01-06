@@ -12,6 +12,7 @@ NEW FEATURES in this version:
 2. ✅ Fetches reply_count (how many comments each tweet has)
 3. ✅ Stores conversation_id (for tracking discussion threads)
 4. ✅ Identifies retweets and gets original content
+5. ✅ FIXED: Handles datetime JSON serialization properly
 
 This script:
 1. Connects to Twitter API using Bearer Token
@@ -263,7 +264,7 @@ def fetch_tweets():
                         # BASIC INFORMATION
                         'id': tweet.id,                    # Unique tweet ID (number)
                         'text': full_text,                 # FULL TEXT (not truncated!)
-                        'created_at': tweet.created_at,    # When posted (datetime)
+                        'created_at': tweet.created_at,    # When posted (datetime object)
                         
                         # AUTHOR INFORMATION
                         'author_username': username,       # Who posted it (@username)
@@ -325,7 +326,7 @@ def fetch_tweets():
         print(f"❌ Fatal error: {e}")
 
 # ==============================================================================
-# FUNCTION 2: STORE TWEETS IN DATABASE (ENHANCED)
+# FUNCTION 2: STORE TWEETS IN DATABASE (ENHANCED + FIXED)
 # ==============================================================================
 
 def store_tweets(tweets):
@@ -335,13 +336,15 @@ def store_tweets(tweets):
     ENHANCEMENT: Now uses UPDATE on conflict to refresh data
     If a tweet already exists, we update its metrics (likes, RTs may have changed)
     
+    FIX: Converts datetime objects to strings for JSON storage
+    
     Args:
         tweets (list): List of tweet dictionaries to save
         
     Process:
     1. Connect to PostgreSQL database
-    2. For each tweet, try to insert it
-    3. If tweet already exists, UPDATE it with new data
+    2. For each tweet, convert datetime to string for JSON
+    3. Try to insert tweet, or UPDATE if already exists
     4. Commit changes and close connection
     
     Returns:
@@ -375,6 +378,26 @@ def store_tweets(tweets):
         # Loop through each tweet we want to save
         for tweet in tweets:
             try:
+                # ------------------------------------------------------------------
+                # FIX: Prepare tweet data for JSON storage
+                # ------------------------------------------------------------------
+                
+                # Problem: datetime objects cannot be converted to JSON directly
+                # Solution: Create a copy and convert datetime to ISO string
+                
+                # Create a COPY of the tweet dictionary for JSON storage
+                # We don't want to modify the original
+                tweet_for_json = tweet.copy()
+                
+                # Convert datetime object to ISO format string
+                # Example: datetime(2026, 1, 6, 5, 46, 35) → "2026-01-06T05:46:35.552735"
+                # This format is JSON-serializable (it's a string)
+                if isinstance(tweet_for_json['created_at'], datetime):
+                    tweet_for_json['created_at'] = tweet_for_json['created_at'].isoformat()
+                
+                # Now tweet_for_json has ALL the same data, but created_at is a string
+                # This can be safely converted to JSON with json.dumps()
+                
                 # --- Prepare SQL INSERT/UPDATE Statement ---
                 
                 # This SQL command inserts tweet data into 'tweets' table
@@ -383,15 +406,15 @@ def store_tweets(tweets):
                 #   - If tweet ID exists, UPDATE it with new data
                 # 
                 # Why UPDATE? Engagement metrics change over time!
-                # A tweet might have had 10 likes, now has 50 likes
+                # A tweet might have had 10 likes yesterday, now has 50 likes
                 cursor.execute("""
                     INSERT INTO tweets (
-                        id,              -- Tweet ID (unique)
+                        id,              -- Tweet ID (unique, primary key)
                         text,            -- Tweet content (FULL TEXT now!)
-                        author_username, -- Who posted it
-                        created_at,      -- When posted
-                        retweet_count,   -- Retweets
-                        like_count,      -- Likes
+                        author_username, -- Who posted it (@username)
+                        created_at,      -- When posted (timestamp)
+                        retweet_count,   -- Number of retweets
+                        like_count,      -- Number of likes
                         raw_data         -- Extra data as JSON (includes reply_count!)
                     )
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -401,34 +424,38 @@ def store_tweets(tweets):
                         like_count = EXCLUDED.like_count,        -- Update like count
                         raw_data = EXCLUDED.raw_data             -- Update all metadata
                 """, (
-                    # Values to insert (matching the order above)
-                    tweet['id'],                    # From tweet dictionary
-                    tweet['text'],                  # FULL TEXT (not truncated!)
-                    tweet['author_username'],       # From tweet dictionary
-                    tweet['created_at'],            # From tweet dictionary
-                    tweet['retweet_count'],         # From tweet dictionary
-                    tweet['like_count'],            # From tweet dictionary
-                    json.dumps(tweet)               # Store EVERYTHING as JSON
-                                                    # (includes reply_count, conversation_id, etc.)
+                    # Values to insert/update (matching the column order above)
+                    tweet['id'],                      # Tweet ID (big integer)
+                    tweet['text'],                    # FULL TEXT (not truncated!)
+                    tweet['author_username'],         # Username string
+                    tweet['created_at'],              # Original datetime object 
+                                                      # PostgreSQL can handle datetime directly
+                    tweet['retweet_count'],           # Integer
+                    tweet['like_count'],              # Integer
+                    json.dumps(tweet_for_json)        # FIXED! Now uses version with string datetime
+                                                      # This contains: reply_count, quote_count,
+                                                      # conversation_id, is_retweet, etc.
                 ))
                 
                 # --- Check if Operation Was Successful ---
                 
-                # rowcount tells us how many rows were affected
-                # If > 0, tweet was inserted or updated successfully
+                # cursor.rowcount tells us how many rows were affected
+                # If > 0, tweet was either inserted (new) or updated (existing)
                 if cursor.rowcount > 0:
                     stored_count += 1          # Increment success counter
                 
             except Exception as e:
                 # If something goes wrong with this specific tweet, print error
+                # But don't stop - try to save the other tweets
                 print(f"⚠️ Error storing tweet {tweet['id']}: {e}")
-                continue  # Try next tweet
+                continue  # Skip to next tweet
         
         # ------------------------------------------------------------------
         # STEP 4: SAVE CHANGES AND CLOSE CONNECTION
         # ------------------------------------------------------------------
         
         # Commit = permanently save all changes to database
+        # Until we commit, changes are only in memory
         conn.commit()
         
         # Close cursor (no longer need it)
@@ -454,24 +481,31 @@ def store_tweets(tweets):
 if __name__ == "__main__":
     """
     This code runs when the script is executed directly
+    (not when imported as a module)
     
     It wraps our main function in error handling:
-    - If user presses Ctrl+C, exit gracefully
-    - If any other error occurs, print it
+    - If user presses Ctrl+C, exit gracefully with message
+    - If any other error occurs, print the error details
+    
+    This is Python best practice for command-line scripts
     """
     
     try:
         # Call the main function to fetch tweets
+        # This starts the entire process
         fetch_tweets()
         
     except KeyboardInterrupt:
         # User pressed Ctrl+C to stop the script
+        # This is a clean way to exit, not an error
         print("\n\n⚠️ Interrupted by user")
         
     except Exception as e:
         # Any other unexpected error
+        # Print it so we can debug
         print(f"\n\n❌ Unexpected error: {e}")
 
 # ==============================================================================
 # END OF SCRIPT
 # ==============================================================================
+✅ Stored/Updated: 10 tweets with FULL text and reply counts
