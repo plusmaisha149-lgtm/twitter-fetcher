@@ -104,6 +104,9 @@ def fetch_tweets():
         # Twitter will find tweets containing these exact phrases
         queries = [
             "Samia Suluhu Hassan",
+            "Tundu Lissu",
+            "Tanzania politics",
+            "Tanzania 2026"
         ]
         
         # Empty list to store all tweets we find
@@ -382,3 +385,4 @@ if __name__ == "__main__":
 # ==============================================================================
 # END OF SCRIPT
 # ==============================================================================
+
