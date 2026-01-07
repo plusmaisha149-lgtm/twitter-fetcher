@@ -9,7 +9,7 @@ Purpose: Fetch tweets using TWO methods:
 
 Twitter Account: @MaishaP81252
 App Name: taifa
-Last Updated: January 6, 2026
+Last Updated: January 7, 2026
 
 Features:
 - Fetches tweets from specific Twitter accounts (user timelines)
@@ -32,7 +32,7 @@ from datetime import datetime
 import os
 
 # ==============================================================================
-# CONFIGURATION - NEW TWITTER API CREDENTIALS
+# CONFIGURATION - TWITTER API CREDENTIALS (DECODED)
 # ==============================================================================
 
 # DATABASE CONNECTION STRING
@@ -41,10 +41,11 @@ DATABASE_URL = os.getenv(
     'postgresql://twitter_data_pygj_user:bBZRdS06QyhBHhBGWRtl4pkLjlaFO5MS@dpg-d5adn26r433s738bha50-a.singapore-postgres.render.com/twitter_data_pygj'
 )
 
-# NEW TWITTER API CREDENTIALS (from @MaishaP81252 / taifa app)
-CONSUMER_KEY = os.getenv('TWITTER_CONSUMER_KEY', 's49mJ9FlavJeRylWelaXBi2Og')
-CONSUMER_SECRET = os.getenv('TWITTER_CONSUMER_SECRET', 'FK08MsWVKnmdeAhniyU4eUdFu5ITh0XQGFXUuglrNtGfUt9yG1')
-BEARER_TOKEN = os.getenv('TWITTER_BEARER_TOKEN', 'AAAAAAAAAAAAAAAAAAAAAFA+6wEAAAAA2+w59D8nZsUF28G/J/lbljdSvU8=JzqyxM2pMUdPPeUCfZlhE27uhbhwnHhyHpTUTMGSOEjSy3nWzk')
+# TWITTER API CREDENTIALS (from @MaishaP81252 / taifa app)
+# IMPORTANT: These are DECODED (not URL-encoded)
+CONSUMER_KEY = os.getenv('TWITTER_CONSUMER_KEY', 'U7L7WqtodXclplivYDANCD6M3')
+CONSUMER_SECRET = os.getenv('TWITTER_CONSUMER_SECRET', '4Vv9sODkm2gWh41wMkDVfztvfZwXPngDYK46uP7nDevPMeIOM5')
+BEARER_TOKEN = os.getenv('TWITTER_BEARER_TOKEN', 'AAAAAAAAAAAAAAAAAAAAAFA+6wEAAAAAMSLCN56+cpyekMtdQtB9xUxiI/s=WnRjTHghwFewmqHEbj3NqjpOnt2uyo9B2yVUFqoFsxCxesFI1q')
 
 # ==============================================================================
 # CONFIGURATION - WHAT TO FETCH
